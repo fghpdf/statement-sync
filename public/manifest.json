@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "StatementSync",
+  "version": "1.0.0",
+  "description": "Minimalist extension to sync bank statements (Amex JP) to Google Drive.",
+  "permissions": ["identity", "storage", "activeTab", "scripting"],
+  "host_permissions": [
+    "https://*.americanexpress.com/*",
+    "https://www.googleapis.com/*"
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "assets/background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.americanexpress.com/*",
+        "https://global.americanexpress.com/*"
+      ],
+      "js": ["assets/content-amexjp.js"]
+    }
+  ],
+  "oauth2": {
+    "client_id": "YOUR_GOOGLE_OAUTH_CLIENT_ID.apps.googleusercontent.com",
+    "scopes": ["https://www.googleapis.com/auth/drive.file"]
+  }
+}
