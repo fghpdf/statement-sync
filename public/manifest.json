@@ -21,7 +21,7 @@
         "https://*.americanexpress.com/*",
         "https://global.americanexpress.com/*"
       ],
-      "js": ["assets/content-amexjp.js"]
+      "js": ["assets/institutions/amexjp.js"]
     }
   ],
   "oauth2": {

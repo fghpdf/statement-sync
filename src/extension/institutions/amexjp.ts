@@ -1,4 +1,4 @@
-import { generateStatementFilename } from './utils/filename';
+import { generateStatementFilename } from '../utils/filename';
 
 /**
  * Content Script for American Express Japan

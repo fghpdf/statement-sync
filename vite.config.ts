@@ -18,7 +18,7 @@ export default defineConfig(({ command }) => {
           main: path.resolve(__dirname, 'index.html'),
           popup: path.resolve(__dirname, 'popup.html'),
           background: path.resolve(__dirname, 'src/extension/background.ts'),
-          'content-amexjp': path.resolve(__dirname, 'src/extension/content-amexjp.ts'),
+          'institutions/amexjp': path.resolve(__dirname, 'src/extension/institutions/amexjp.ts'),
         },
         output: {
           entryFileNames: 'assets/[name].js',
