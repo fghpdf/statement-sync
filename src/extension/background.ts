@@ -35,8 +35,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   if (request.action === 'LOGOUT') {
     chrome.identity.getAuthToken({ interactive: false }, (token) => {
-      if (!chrome.runtime.lastError && token) {
-        chrome.identity.removeCachedAuthToken({ token: token as string }, () => {
+      const tokenStr = typeof token === 'string' ? token : (token as any)?.token;
+      if (!chrome.runtime.lastError && tokenStr) {
+        chrome.identity.removeCachedAuthToken({ token: tokenStr }, () => {
           sendResponse({ success: true });
         });
       } else {
