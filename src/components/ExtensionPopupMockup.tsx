@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Check, Settings, Download, FileText, Loader2, AlertCircle, RefreshCw } from 'lucide-react';
 
-type PageStatus = 'checking' | 'on-amex' | 'off-amex';
+type PageStatusType = 'checking' | 'on-amex-statement' | 'on-amex-other' | 'off-amex';
 
 export function ExtensionPopupMockup() {
   const [isSyncing, setIsSyncing] = useState(false);
@@ -12,12 +12,13 @@ export function ExtensionPopupMockup() {
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [includeSuffix, setIncludeSuffix] = useState(true);
-  const [pageStatus, setPageStatus] = useState<PageStatus>('checking');
+  const [pageStatus, setPageStatus] = useState<PageStatusType>('checking');
   const [activeTabUrl, setActiveTabUrl] = useState('');
+  const [hasNativeBtn, setHasNativeBtn] = useState(false);
 
   const showToast = (message: string, type: 'success' | 'error') => {
     setToast({ message, type });
-    setTimeout(() => setToast(null), 4000);
+    setTimeout(() => setToast(null), 5000);
   };
 
   const checkCurrentTab = async () => {
@@ -25,10 +26,34 @@ export function ExtensionPopupMockup() {
     setPageStatus('checking');
     try {
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-      const url = tabs[0]?.url || '';
+      const activeTab = tabs[0];
+      const url = activeTab?.url || '';
       setActiveTabUrl(url);
+
       if (url.includes('americanexpress.com')) {
-        setPageStatus('on-amex');
+        // Ask content script to verify if we are on statement page and if download buttons exist
+        if (activeTab?.id) {
+          chrome.tabs.sendMessage(activeTab.id, { action: 'CHECK_STATEMENT_PAGE' }, (response) => {
+            if (chrome.runtime.lastError || !response) {
+              // Fallback to URL detection if content script doesn't respond yet
+              if (url.includes('/activity/statement')) {
+                setPageStatus('on-amex-statement');
+              } else {
+                setPageStatus('on-amex-other');
+              }
+              setHasNativeBtn(false);
+            } else {
+              setHasNativeBtn(response.hasNativeDownloadBtn);
+              if (response.onStatementPage) {
+                setPageStatus('on-amex-statement');
+              } else {
+                setPageStatus('on-amex-other');
+              }
+            }
+          });
+        } else {
+          setPageStatus('on-amex-other');
+        }
       } else {
         setPageStatus('off-amex');
       }
@@ -46,6 +71,32 @@ export function ExtensionPopupMockup() {
       });
     }
   }, []);
+
+  // Bind to storage for sync status (content script will write here when download completes)
+  useEffect(() => {
+    if (isExtension && chrome.storage?.local) {
+      chrome.storage.local.get(['syncStatus'], (result) => {
+        if (result.syncStatus) {
+          const { isSyncing: loading, synced: done, toast: storedToast } = result.syncStatus;
+          if (loading !== undefined) setIsSyncing(loading);
+          if (done !== undefined) setSynced(done);
+          if (storedToast !== undefined) setToast(storedToast);
+        }
+      });
+
+      const handleStorageChange = (changes: any, area: string) => {
+        if (area === 'local' && changes.syncStatus?.newValue) {
+          const { isSyncing: loading, synced: done, toast: storedToast } = changes.syncStatus.newValue;
+          if (loading !== undefined) setIsSyncing(loading);
+          if (done !== undefined) setSynced(done);
+          if (storedToast !== undefined) setToast(storedToast);
+        }
+      };
+
+      chrome.storage.onChanged.addListener(handleStorageChange);
+      return () => chrome.storage.onChanged.removeListener(handleStorageChange);
+    }
+  }, [isExtension]);
 
   useEffect(() => {
     if (isExtension) checkCurrentTab();
@@ -70,10 +121,55 @@ export function ExtensionPopupMockup() {
     });
   };
 
-  const handleSync = async () => {
+  // 1. Auto-download and sync flow (interception based)
+  const handleAutoDownload = async () => {
     setIsSyncing(true);
     setToast(null);
     setSynced(false);
+
+    // Save state to storage
+    if (isExtension && chrome.storage?.local) {
+      chrome.storage.local.set({ syncStatus: { isSyncing: true, synced: false, toast: null } });
+    }
+
+    try {
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      const activeTab = tabs[0];
+      if (!activeTab?.id) throw new Error('无法获取当前标签页。');
+
+      chrome.tabs.sendMessage(activeTab.id, { action: 'TRIGGER_NATIVE_DOWNLOAD' }, (response) => {
+        if (chrome.runtime.lastError) {
+          const err = '页面脚本响应超时，请刷新页面后重试。';
+          setIsSyncing(false);
+          showToast(err, 'error');
+          chrome.storage.local.set({ syncStatus: { isSyncing: false, synced: false, toast: { message: err, type: 'error' } } });
+          return;
+        }
+
+        if (!response?.success) {
+          const err = response?.error || '无法触发官方下载';
+          setIsSyncing(false);
+          showToast(err, 'error');
+          chrome.storage.local.set({ syncStatus: { isSyncing: false, synced: false, toast: { message: err, type: 'error' } } });
+        } else {
+          showToast('正在打开官方选项并触发下载，请勿刷新页面...', 'success');
+        }
+      });
+    } catch (err: any) {
+      setIsSyncing(false);
+      showToast(err.message || '发生未知错误', 'error');
+    }
+  };
+
+  // 2. DOM Scraper Fallback Sync Flow
+  const handleScrapeFallback = async () => {
+    setIsSyncing(true);
+    setToast(null);
+    setSynced(false);
+
+    if (isExtension && chrome.storage?.local) {
+      chrome.storage.local.set({ syncStatus: { isSyncing: true, synced: false, toast: null } });
+    }
 
     try {
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -85,13 +181,15 @@ export function ExtensionPopupMockup() {
         { action: 'EXTRACT_STATEMENT', payload: { includeStatementSuffix: includeSuffix } },
         (extractResponse) => {
           if (chrome.runtime.lastError) {
-            showToast('请在 AmexJP 账单页面运行此插件。', 'error');
+            const err = '请在 AmexJP 账单页面运行此插件。';
             setIsSyncing(false);
+            showToast(err, 'error');
             return;
           }
           if (!extractResponse?.success) {
-            showToast(extractResponse?.error || '提取数据失败', 'error');
+            const err = extractResponse?.error || '提取数据失败';
             setIsSyncing(false);
+            showToast(err, 'error');
             return;
           }
 
@@ -110,16 +208,19 @@ export function ExtensionPopupMockup() {
                 setSynced(true);
                 showToast('已成功保存至 Google Drive', 'success');
                 setTimeout(() => setSynced(false), 4000);
+                chrome.storage.local.set({ syncStatus: { isSyncing: false, synced: true, toast: { message: '已成功保存至 Google Drive', type: 'success' } } });
               } else {
-                showToast(uploadResponse?.error || '上传失败', 'error');
+                const err = uploadResponse?.error || '上传失败';
+                showToast(err, 'error');
+                chrome.storage.local.set({ syncStatus: { isSyncing: false, synced: false, toast: { message: err, type: 'error' } } });
               }
             }
           );
         }
       );
     } catch (err: any) {
-      showToast(err.message || '发生未知错误', 'error');
       setIsSyncing(false);
+      showToast(err.message || '发生未知错误', 'error');
     }
   };
 
@@ -251,10 +352,22 @@ export function ExtensionPopupMockup() {
               </div>
             )}
 
-            {pageStatus === 'on-amex' && (
-              <div className="border-l-2 border-black pl-4 py-1">
-                <p className="text-sm font-medium text-black">已检测到 Amex JP 页面</p>
-                <p className="text-[11px] text-gray-400 mt-0.5 truncate">{activeTabUrl}</p>
+            {pageStatus === 'on-amex-statement' && (
+              <div className="border-l-2 border-green-500 pl-4 py-1">
+                <p className="text-sm font-medium text-black">已检测到 Amex JP 账单页</p>
+                <p className="text-[10px] text-green-600 font-medium mt-0.5">
+                  {hasNativeBtn ? '✓ 已找到官方 CSV 下载按钮' : '✓ 账单数据就绪 (支持 DOM 提取)'}
+                </p>
+                <p className="text-[11px] text-gray-400 mt-1 truncate">{activeTabUrl}</p>
+              </div>
+            )}
+
+            {pageStatus === 'on-amex-other' && (
+              <div className="border-l-2 border-yellow-500 pl-4 py-1">
+                <p className="text-sm font-medium text-black">已在 Amex，但不在明细页</p>
+                <p className="text-[11px] text-gray-500 mt-0.5">
+                  请在左侧点击“過去のご利用分”并选择任一账期。
+                </p>
               </div>
             )}
 
@@ -271,7 +384,7 @@ export function ExtensionPopupMockup() {
                   >
                     americanexpress.com
                   </a>{' '}
-                  账单详情页
+                  账单页。
                 </p>
               </div>
             )}
@@ -279,15 +392,16 @@ export function ExtensionPopupMockup() {
 
           <div className="w-full h-px bg-gray-100" />
 
-          {/* Sync button */}
-          <div className="px-6 py-5">
+          {/* Sync action area */}
+          <div className="px-6 py-5 flex flex-col gap-3">
+            {/* Primary button: Official CSV auto sync (interception based) */}
             <button
-              onClick={handleSync}
-              disabled={isSyncing || synced || !isAuthenticated || pageStatus !== 'on-amex'}
+              onClick={handleAutoDownload}
+              disabled={isSyncing || synced || !isAuthenticated || pageStatus !== 'on-amex-statement' || !hasNativeBtn}
               className={`w-full py-2.5 text-sm transition-all flex items-center justify-center gap-2 border ${
                 synced
                   ? 'border-gray-200 text-gray-400 bg-transparent cursor-default'
-                  : !isAuthenticated || pageStatus !== 'on-amex'
+                  : !isAuthenticated || pageStatus !== 'on-amex-statement' || !hasNativeBtn
                   ? 'border-gray-200 text-gray-300 bg-gray-50 cursor-not-allowed'
                   : 'bg-black text-white border-black hover:bg-gray-800'
               }`}
@@ -295,23 +409,35 @@ export function ExtensionPopupMockup() {
               {isSyncing ? (
                 <>
                   <Loader2 className="w-4 h-4 animate-spin" strokeWidth={1.5} />
-                  提取并上传中...
+                  自动下载并同步中...
                 </>
               ) : synced ? (
                 <>
                   <Check className="w-4 h-4" strokeWidth={1.5} />
-                  已保存至 Drive
+                  同步完成
                 </>
               ) : (
                 <>
                   <Download className="w-4 h-4" strokeWidth={1.5} />
-                  导出并归档
+                  自动下载官方 CSV 并同步
                 </>
               )}
             </button>
+
+            {/* Secondary fallback: Scrape DOM */}
+            {pageStatus === 'on-amex-statement' && (
+              <button
+                onClick={handleScrapeFallback}
+                disabled={isSyncing || synced || !isAuthenticated}
+                className="text-[11px] text-gray-500 hover:text-black underline transition-colors py-1 text-center"
+              >
+                从页面直接提取表格 (备用)
+              </button>
+            )}
+
             {pageStatus === 'off-amex' && !isSyncing && (
-              <p className="text-[10px] text-gray-400 text-center mt-2">
-                请先导航至 AmexJP 账单页面
+              <p className="text-[10px] text-gray-400 text-center mt-1">
+                请先导航至 Amex JP 账单页面并完成 Drive 连接
               </p>
             )}
           </div>
