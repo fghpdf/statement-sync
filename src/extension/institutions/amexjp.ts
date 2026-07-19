@@ -136,7 +136,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 function updateSyncStatus(status: any) {
   if (typeof chrome !== 'undefined' && chrome.storage?.local) {
     chrome.storage.local.get(['syncStatus'], (result) => {
-      const current = result.syncStatus || {};
+      const current = (result.syncStatus as any) || {};
       chrome.storage.local.set({ syncStatus: { ...current, ...status } });
     });
   }

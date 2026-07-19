@@ -77,7 +77,7 @@ export function ExtensionPopupMockup() {
     if (isExtension && chrome.storage?.local) {
       chrome.storage.local.get(['syncStatus'], (result) => {
         if (result.syncStatus) {
-          const { isSyncing: loading, synced: done, toast: storedToast } = result.syncStatus;
+          const { isSyncing: loading, synced: done, toast: storedToast } = result.syncStatus as any;
           if (loading !== undefined) setIsSyncing(loading);
           if (done !== undefined) setSynced(done);
           if (storedToast !== undefined) setToast(storedToast);
