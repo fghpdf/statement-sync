@@ -122,6 +122,7 @@ export function ExtensionPopupMockup() {
   };
 
   // 1. Auto-download and sync flow (interception based)
+  // 1. Auto-download and sync flow (interception based)
   const handleAutoDownload = async () => {
     setIsSyncing(true);
     setToast(null);
@@ -132,13 +133,37 @@ export function ExtensionPopupMockup() {
       chrome.storage.local.set({ syncStatus: { isSyncing: true, synced: false, toast: null } });
     }
 
+    // Set a safety timeout of 15 seconds to prevent infinite spinner
+    const timeoutId = setTimeout(() => {
+      if (isExtension && chrome.storage?.local) {
+        chrome.storage.local.get(['syncStatus'], (result) => {
+          if (result.syncStatus?.isSyncing) {
+            const err = '官方下载同步超时，请重试或尝试下方的“直接提取表格 (备用)”';
+            setIsSyncing(false);
+            showToast(err, 'error');
+            chrome.storage.local.set({ 
+              syncStatus: { 
+                isSyncing: false, 
+                synced: false, 
+                toast: { message: err, type: 'error' } 
+              } 
+            });
+          }
+        });
+      }
+    }, 15000);
+
     try {
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
       const activeTab = tabs[0];
-      if (!activeTab?.id) throw new Error('无法获取当前标签页。');
+      if (!activeTab?.id) {
+        clearTimeout(timeoutId);
+        throw new Error('无法获取当前标签页。');
+      }
 
       chrome.tabs.sendMessage(activeTab.id, { action: 'TRIGGER_NATIVE_DOWNLOAD' }, (response) => {
         if (chrome.runtime.lastError) {
+          clearTimeout(timeoutId);
           const err = '页面脚本响应超时，请刷新页面后重试。';
           setIsSyncing(false);
           showToast(err, 'error');
@@ -147,6 +172,7 @@ export function ExtensionPopupMockup() {
         }
 
         if (!response?.success) {
+          clearTimeout(timeoutId);
           const err = response?.error || '无法触发官方下载';
           setIsSyncing(false);
           showToast(err, 'error');
@@ -156,6 +182,7 @@ export function ExtensionPopupMockup() {
         }
       });
     } catch (err: any) {
+      clearTimeout(timeoutId);
       setIsSyncing(false);
       showToast(err.message || '发生未知错误', 'error');
     }

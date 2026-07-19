@@ -7,38 +7,6 @@ import { generateStatementFilename } from '../utils/filename';
 
 console.log('[StatementSync] Amex JP Content Script loaded.');
 
-// Inject interceptor script into the page context to capture clicks on hidden download links
-function injectInterceptor() {
-  const script = document.createElement('script');
-  script.textContent = `
-    (function() {
-      const originalClick = HTMLAnchorElement.prototype.click;
-      HTMLAnchorElement.prototype.click = function() {
-        const isCsvDownload = this.download && (
-          this.download.endsWith('.csv') || 
-          this.href.startsWith('blob:') || 
-          this.href.startsWith('data:')
-        );
-        if (isCsvDownload) {
-          console.log('[StatementSync] Intercepted CSV download click:', this.href, this.download);
-          window.dispatchEvent(new CustomEvent('SYNC_DOWNLOAD_INTERCEPTED', {
-            detail: { href: this.href, download: this.download }
-          }));
-        }
-        return originalClick.apply(this, arguments);
-      };
-    })();
-  `;
-  (document.head || document.documentElement).appendChild(script);
-  script.remove();
-}
-
-try {
-  injectInterceptor();
-} catch (e) {
-  console.error('[StatementSync] Failed to inject interceptor:', e);
-}
-
 // Listen to download interceptions
 window.addEventListener('SYNC_DOWNLOAD_INTERCEPTED', async (event: any) => {
   const { href, download } = event.detail;
