@@ -137,7 +137,7 @@ export function ExtensionPopupMockup() {
     const timeoutId = setTimeout(() => {
       if (isExtension && chrome.storage?.local) {
         chrome.storage.local.get(['syncStatus'], (result) => {
-          if (result.syncStatus?.isSyncing) {
+          if ((result.syncStatus as any)?.isSyncing) {
             const err = '官方下载同步超时，请重试或尝试下方的“直接提取表格 (备用)”';
             setIsSyncing(false);
             showToast(err, 'error');
